@@ -16,12 +16,12 @@ Windows 下的小工具：一键查看 PS5 DualSense / DualSense Edge 手柄的�
 
 到 [Releases](../../releases) 页面下载最新版：
 
-- `DualSense电量.exe` —— 安装程序（可选安装目录，自动创建桌面/开始菜单快捷方式）
-- `DualSense电量便携版.exe` —— 绿色便携版（免安装，解压即用）
+- `DualSenseBatteryHotkey-Setup.exe` —— 安装版（自动创建桌面/开始菜单快捷方式）
+- `DualSenseBatteryHotkey-Portable.exe` —— 便携版（免安装，直接运行）
 
 ## 安装
 
-1. 运行 `Setup.exe`，选择安装目录，点「安装」
+1. 运行 `DualSenseBatteryHotkey-Setup.exe`，选择安装目录，点「安装」
 2. 卸载：运行安装目录下的 `Uninstall.exe`，或在「设置 → 应用」里卸载
 
 ## 使用
