@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""DualSense 电量热键：快捷键或长按 PS 键 1.5 秒，右下角弹自定义电量卡片。"""
+"""DualSense 电量热键：快捷键或长按手柄按键 1.5 秒，右下角弹自定义电量卡片。"""
 import json
 import os
 import queue
@@ -32,9 +32,34 @@ PS_HOLD_SECONDS = 1.5
 BT_IN_REPORT = 0x31
 BT_OUT_CRC_SEED = 0xA2
 BT_BATT_OFFSET = 54
-BT_PS_OFFSET = 11
 DEFAULT_HOTKEY = "ctrl+shift+b"
 THROTTLE_SECONDS = 1.5
+
+# 可长按触发的手柄按键（DualSense 输入报告按键位；USB 与蓝牙 byte 偏移差 1）
+BUTTONS = {
+    "ps":       {"label": "PS 键",       "group": "buttons3", "bit": 0x01},
+    "mute":     {"label": "麦克风静音键", "group": "buttons3", "bit": 0x04},
+    "touchpad": {"label": "触控板按压",   "group": "buttons3", "bit": 0x02},
+    "square":   {"label": "方块 □",      "group": "buttons1", "bit": 0x01},
+    "cross":    {"label": "叉 ×",        "group": "buttons1", "bit": 0x02},
+    "circle":   {"label": "圆圈 ○",      "group": "buttons1", "bit": 0x04},
+    "triangle": {"label": "三角 △",      "group": "buttons1", "bit": 0x08},
+    "l1":       {"label": "L1",          "group": "buttons1", "bit": 0x10},
+    "r1":       {"label": "R1",          "group": "buttons1", "bit": 0x20},
+    "l2":       {"label": "L2",          "group": "buttons1", "bit": 0x40},
+    "r2":       {"label": "R2",          "group": "buttons1", "bit": 0x80},
+    "create":   {"label": "Create/分享", "group": "buttons2", "bit": 0x01},
+    "options":  {"label": "Options/菜单", "group": "buttons2", "bit": 0x02},
+    "l3":       {"label": "L3",          "group": "buttons2", "bit": 0x04},
+    "r3":       {"label": "R3",          "group": "buttons2", "bit": 0x08},
+    "dup":      {"label": "十字键 上",    "group": "buttons2", "bit": 0x10},
+    "dright":   {"label": "十字键 右",    "group": "buttons2", "bit": 0x20},
+    "ddown":    {"label": "十字键 下",    "group": "buttons2", "bit": 0x40},
+    "dleft":    {"label": "十字键 左",    "group": "buttons2", "bit": 0x80},
+}
+BUTTON_LABEL_TO_KEY = {v["label"]: k for k, v in BUTTONS.items()}
+BUTTON_GROUP_OFFSET = {"buttons1": 8, "buttons2": 9, "buttons3": 10}
+DEFAULT_BUTTON = "ps"
 
 MAGIC = "#ffffff"                # 透明色（用于圆角，白色以贴合浅色背景）
 CARD = "#14141e"                 # 卡片深色底
@@ -58,18 +83,23 @@ def _app_dir():
 CONFIG_PATH = os.path.join(_app_dir(), "config.json")
 
 
-def _load_hotkey():
+def _load_config():
     try:
         with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-            return json.load(f).get("hotkey", DEFAULT_HOTKEY)
+            data = json.load(f)
     except Exception:
-        return DEFAULT_HOTKEY
+        data = {}
+    hotkey = data.get("hotkey", DEFAULT_HOTKEY)
+    button = data.get("button", DEFAULT_BUTTON)
+    if button not in BUTTONS:
+        button = DEFAULT_BUTTON
+    return {"hotkey": hotkey, "button": button}
 
 
-def _save_hotkey(h):
+def _save_config(cfg):
     try:
         with open(CONFIG_PATH, "w", encoding="utf-8") as f:
-            json.dump({"hotkey": h}, f, ensure_ascii=False)
+            json.dump(cfg, f, ensure_ascii=False)
     except Exception:
         pass
 
@@ -287,6 +317,7 @@ _icon = None
 _last_show = 0.0
 _hotkey = DEFAULT_HOTKEY
 _hotkey_handler = None
+_button = DEFAULT_BUTTON
 
 
 def _color_for(level, full, charging):
@@ -381,6 +412,12 @@ def _apply_hotkey(h):
     _hotkey = h
 
 
+def _apply_button(key):
+    global _button
+    if key in BUTTONS:
+        _button = key
+
+
 def open_settings():
     _ui_queue.put(("settings",))
 
@@ -440,15 +477,14 @@ def hid_reader():
         is_bt = _is_bluetooth()
         rid = BT_IN_REPORT if is_bt else 0x01
         batt_off = BT_BATT_OFFSET if is_bt else 53
-        ps_off = BT_PS_OFFSET if is_bt else 10
 
         with _lock:
             _state["connected"] = True
             _state["name"] = name
         _refresh_tray()
 
-        ps_pressed_at = None
-        ps_fired = False
+        btn_pressed_at = None
+        btn_fired = False
         last_batt = None
         last_enable = 0.0
         try:
@@ -500,17 +536,19 @@ def hid_reader():
                     last_batt = batt
                     _refresh_tray()
 
-                ps_down = bool(b[ps_off] & 0x01)
-                if ps_down:
-                    if ps_pressed_at is None:
-                        ps_pressed_at = now
-                        ps_fired = False
-                    elif not ps_fired and (now - ps_pressed_at) >= PS_HOLD_SECONDS:
-                        ps_fired = True
+                spec = BUTTONS.get(_button, BUTTONS[DEFAULT_BUTTON])
+                btn_off = BUTTON_GROUP_OFFSET[spec["group"]] + (1 if is_bt else 0)
+                btn_down = bool(b[btn_off] & spec["bit"])
+                if btn_down:
+                    if btn_pressed_at is None:
+                        btn_pressed_at = now
+                        btn_fired = False
+                    elif not btn_fired and (now - btn_pressed_at) >= PS_HOLD_SECONDS:
+                        btn_fired = True
                         show_battery()
                 else:
-                    ps_pressed_at = None
-                    ps_fired = False
+                    btn_pressed_at = None
+                    btn_fired = False
         except OSError:
             with _lock:
                 _state["connected"] = False
@@ -584,6 +622,24 @@ def _make_popup(root, info):
     return win, bgra, W, H
 
 
+def _place_bottom_right(win, margin=16):
+    """把窗口定位到工作区右下角（避开任务栏；req 尺寸不含标题栏，需补偿）。"""
+    try:
+        win.update_idletasks()
+        w = win.winfo_reqwidth()
+        h = win.winfo_reqheight()
+        wa = _work_area()
+        x = wa[2] - w - margin - 8       # 8 = 左右边框补偿
+        y = wa[3] - h - margin - 40      # 40 = 标题栏 + 上下边框补偿
+        if x < wa[0]:
+            x = wa[0]
+        if y < wa[1]:
+            y = wa[1]
+        win.geometry("+%d+%d" % (x, y))
+    except Exception:
+        pass
+
+
 def _make_settings_window(root):
     win = tk.Toplevel(root)
     win.title("设置 · DualSense 电量")
@@ -591,7 +647,7 @@ def _make_settings_window(root):
     win.resizable(False, False)
     win.attributes("-topmost", True)
 
-    rec = {"hotkey": _hotkey, "recording": False}
+    rec = {"hotkey": _hotkey, "recording": False, "button": _button}
 
     tk.Label(win, text="键盘快捷键", bg="#20212b", fg="#8a90a0",
              font=("Microsoft YaHei UI", 10)).pack(anchor="w", padx=16, pady=(14, 4))
@@ -605,6 +661,26 @@ def _make_settings_window(root):
     status_var = tk.StringVar(value="")
     tk.Label(win, textvariable=status_var, bg="#20212b", fg="#8a90a0",
              font=("Microsoft YaHei UI", 9)).pack(padx=16)
+
+    tk.Label(win, text="长按手柄按键（1.5 秒）", bg="#20212b", fg="#8a90a0",
+             font=("Microsoft YaHei UI", 10)).pack(anchor="w", padx=16, pady=(12, 4))
+
+    def on_button_change(label):
+        rec["button"] = BUTTON_LABEL_TO_KEY.get(label, DEFAULT_BUTTON)
+        status_var.set("按「保存」生效")
+
+    btn_label_var = tk.StringVar(value=BUTTONS[_button]["label"])
+    btn_menu = tk.OptionMenu(win, btn_label_var,
+                             *[BUTTONS[k]["label"] for k in BUTTONS],
+                             command=on_button_change)
+    btn_menu.config(bg="#2c2d3d", fg="#eef0f6", activebackground="#3a3b4a",
+                    activeforeground="#eef0f6", relief="flat",
+                    highlightthickness=0, font=("Microsoft YaHei UI", 10))
+    btn_menu["menu"].config(bg="#2c2d3d", fg="#eef0f6",
+                            activebackground="#3b82f6",
+                            activeforeground="#ffffff",
+                            font=("Microsoft YaHei UI", 10))
+    btn_menu.pack(fill="x", padx=16, pady=6)
 
     def start_recording():
         rec["recording"] = True
@@ -635,8 +711,9 @@ def _make_settings_window(root):
               font=("Microsoft YaHei UI", 10)).pack(side="left", padx=6)
 
     def save():
-        _save_hotkey(rec["hotkey"])
+        _save_config({"hotkey": rec["hotkey"], "button": rec["button"]})
         _apply_hotkey(rec["hotkey"])
+        _apply_button(rec["button"])
         hotkey_var.set(rec["hotkey"])
         status_var.set("已保存")
 
@@ -659,6 +736,7 @@ def _make_settings_window(root):
     tk.Label(bottom, text="小聪制作", bg="#20212b", fg="#4a4b5a",
              font=("Microsoft YaHei UI", 8)).pack(side="right")
 
+    _place_bottom_right(win)
     return win
 
 
@@ -788,9 +866,11 @@ def main():
     _icon = pystray.Icon("dualsense_battery", _make_tray_image(None, BORDER_GREY),
                          "DualSense 电量", menu)
 
+    cfg = _load_config()
+    _apply_button(cfg["button"])
     threading.Thread(target=hid_reader, daemon=True).start()
     threading.Thread(target=_ui_thread, daemon=True).start()
-    _apply_hotkey(_load_hotkey())
+    _apply_hotkey(cfg["hotkey"])
 
     _icon.run()
 
